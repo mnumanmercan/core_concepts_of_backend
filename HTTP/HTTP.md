@@ -1,256 +1,202 @@
-# Node.js ile HTTP — Öğrenme Notları
-
-> Vanilla `http` modülünden Express.js'e geçiş sürecinde edinilen temel kavramlar.
+# Node.js HTTP Notları
 
 ---
 
-## İçindekiler
+## 1. Express Olmadan HTTP Sunucusu
 
-- [1. HTTP Temelleri](#1-http-temelleri)
-- [2. Vanilla HTTP ile Sunucu](#2-vanilla-http-ile-sunucu)
-- [3. Express.js ile Sunucu](#3-expressjs-ile-sunucu)
-- [4. Karşılaştırma](#4-karşılaştırma)
-- [5. Kritik Notlar](#5-kritik-notlar)
-
----
-
-## 1. HTTP Temelleri
-
-### Request Anatomisi
-Her HTTP isteği üç parçadan oluşur:
-- **Method:** Ne yapmak istediğini belirtir (`GET`, `POST`, `PUT`, `DELETE`)
-- **URL:** Hangi kaynağa erişildiği (`/users`, `/users/42`)
-- **Body:** Sadece `POST`, `PUT`, `PATCH` isteklerinde bulunur. `GET` isteklerinde body olmaz.
-
-### Body Formatları
-HTML formları ile JSON farklı formatlarda veri gönderir:
-
-| Kaynak | Content-Type | Body Görünümü |
-|--------|-------------|---------------|
-| HTML `<form>` | `application/x-www-form-urlencoded` | `name=Ahmet&age=25` |
-| fetch / axios / curl | `application/json` | `{"name":"Ahmet","age":25}` |
-
----
-
-## 2. Vanilla HTTP ile Sunucu
+Node.js'in built-in `http` modülü ile sunucu şöyle kurulur:
 
 ```javascript
 import http from 'node:http';
-import fs from 'fs';
-import path from 'path';
-
-const users = [
-    { id: 1, name: 'Ahmet' },
-    { id: 2, name: 'Ayşe' },
-];
 
 const server = http.createServer((req, res) => {
-    const filePath = path.join(new URL('.', import.meta.url).pathname, 'index.html');
-
-    // GET / → HTML dosyası dön
-    if (req.method === 'GET' && req.url === '/') {
-        fs.readFile(filePath, 'utf-8', (err, data) => {
-            if (err) {
-                res.writeHead(500, { 'Content-Type': 'text/plain' });
-                res.end('Internal Server Error');
-            } else {
-                res.writeHead(200, { 'Content-Type': 'text/html' });
-                res.end(data);
-            }
-        });
-        return;
-    }
-
-    // GET /users → JSON dön
-    if (req.method === 'GET' && req.url === '/users') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(users));
-        return;
-    }
-
-    // POST /users → Yeni kullanıcı ekle
-    if (req.method === 'POST' && req.url === '/users') {
-        let body = '';
-
-        // Body stream olarak parça parça gelir, biriktirmek gerekir
-        req.on('data', chunk => {
-            body += chunk.toString();
-        });
-
-        req.on('end', () => {
-            // Form verisi urlencoded formatında gelir, JSON.parse() değil
-            // URLSearchParams ile parse edilmesi gerekir
-            const parsed = new URLSearchParams(body);
-
-            const newUser = {
-                id: users.length + 1,
-                name: parsed.get('name')
-            };
-
-            users.push(newUser);
-            res.writeHead(201, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(newUser));
-        });
-    }
+    // Her istek buraya düşer
 });
 
 server.listen(8080, () => {
-    console.log('Server is alive now: http://localhost:8080/');
+    console.log('http://localhost:8080/');
 });
 ```
 
-### Önemli Noktalar
+Gelen her isteğin iki önemli bilgisi vardır:
 
-**Routing elle yapılır:**
-`req.method` ve `req.url` kontrol edilerek hangi bloğun çalışacağı belirlenir. Express'teki `app.get()`, `app.post()` gibi yapılar burada yoktur.
+- `req.method` → İsteğin tipi: `GET`, `POST` gibi
+- `req.url` → İsteğin hangi adrese gittiği: `/`, `/users` gibi
 
-**`res.end()` string veya Buffer alır, dosya yolu almaz:**
+Route'lar bu ikisi kontrol edilerek elle yazılır:
+
 ```javascript
-res.end('/index.html') // ❌ Bu "/index.html" yazısını gönderir, dosyayı değil
-res.end(data)          // ✅ fs.readFile ile okunan içerik gönderilir
+if (req.method === 'GET' && req.url === '/users') {
+    // bu bloğu çalıştır
+}
 ```
 
-**Body stream olarak gelir:**
-`req.on('data')` ile parçalar biriktirilir, `req.on('end')` ile işlenir.
-
-**`fs.readFile` asenkron kullanılmalıdır:**
-```javascript
-// ❌ Sunucuyu bloklar — başka istekler beklemek zorunda kalır
-const data = fs.readFileSync(filePath);
-
-// ✅ Non-blocking — dosya okunurken diğer istekler işlenmeye devam eder
-fs.readFile(filePath, (err, data) => { ... });
-```
-
-**`return` kullanımı zorunludur:**
-`if / else if` yerine bağımsız `if` blokları kullanıldığında, bir blok çalıştıktan sonra alttaki blokların da çalışmaması için `return` eklenmelidir. Aksi halde `res.end()` iki kez çağrılarak hata alınır.
+> ⚠️ Koşullar arasında mutlaka `&&` kullan, virgül değil.
+> `if (req.method === 'POST', req.url === '/users')` yanlıştır — virgül soldaki koşulu yok sayar.
 
 ---
 
-## 3. Express.js ile Sunucu
+## 2. HTML Dosyası Göndermek
+
+`res.end()` içine dosya yolu yazmak **çalışmaz:**
 
 ```javascript
-import express from 'express';
-import path from 'path';
+res.end('/index.html') // ❌ Bu metin olarak gönderilir, dosya içeriği değil
+```
 
-const app = express();
+`res.end()` sadece içine ne verirsen onu gönderir. Dosya yolu bir string'dir, onun içeriğini otomatik okumaz.
 
-// Middleware — route tanımlarından ÖNCE yazılmalıdır
-app.use(express.urlencoded({ extended: true })); // Form verisini parse eder
-app.use(express.json());                          // JSON body'yi parse eder
+Doğru yol: önce `fs.readFile()` ile dosyayı oku, sonra içeriği gönder:
 
-const users = [
-    { id: 1, name: 'Ahmet' },
-    { id: 2, name: 'Ayşe' },
-];
+```javascript
+import fs from 'fs';
 
-// GET / → HTML dosyası dön
-app.get('/', (req, res) => {
-    const filePath = path.join(new URL('.', import.meta.url).pathname, 'index.html');
-    res.sendFile(filePath);
+fs.readFile(filePath, 'utf-8', (err, data) => {
+    if (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Internal Server Error');
+    } else {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(data); // artık dosyanın gerçek içeriği gönderiliyor
+    }
 });
+```
 
-// GET /users → JSON dön
-app.get('/users', (req, res) => {
-    res.json(users);
-});
+### `fs.readFile` — encoding verilirse ne olur?
 
-// POST /users → Yeni kullanıcı ekle
-app.post('/users', (req, res) => {
-    const newUser = {
-        id: users.length + 1,
-        name: req.body.name
-    };
+```javascript
+// encoding yok → data bir Buffer döner
+fs.readFile(filePath, (err, data) => { });
 
+// encoding var → data bir string döner
+fs.readFile(filePath, 'utf-8', (err, data) => { });
+```
+
+**Buffer nedir?** Dosya diskten okunduğunda ham veri byte'lar halinde gelir. Buffer bu byte'ları bellekte tutan bir yapıdır. `'utf-8'` verdiğinde Node.js o byte'ları okuyabilir metne çevirir. `res.end()` her ikisini de kabul eder, sonuç aynıdır.
+
+---
+
+## 3. POST — Body Nasıl Okunur?
+
+POST isteğindeki body bir anda gelmez, parça parça (stream olarak) gelir. Bu yüzden biriktirmek gerekir:
+
+```javascript
+if (req.method === 'POST' && req.url === '/users') {
+    let body = '';
+
+    req.on('data', chunk => {
+        body += chunk.toString(); // her parça geldiğinde ekle
+    });
+
+    req.on('end', () => {
+        // tüm parçalar geldi, artık işlenebilir
+        console.log(body); // name=Ahmet
+    });
+}
+```
+
+### Form verisi JSON değildir
+
+HTML formları veriyi şu formatta gönderir:
+
+```
+name=Ahmet
+```
+
+Bu JSON formatı değildir. `JSON.parse(body)` hata verir. Bunun yerine `URLSearchParams` kullanılır:
+
+```javascript
+req.on('end', () => {
+    const parsed = new URLSearchParams(body);
+    const name = parsed.get('name'); // 'Ahmet'
+
+    const newUser = { id: users.length + 1, name };
     users.push(newUser);
-    res.status(201).json(newUser);
-});
 
-app.listen(8080, () => {
-    console.log('Server listening on http://localhost:8080/');
+    res.writeHead(201, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(newUser));
 });
 ```
 
-### Önemli Noktalar
+---
 
-**`express.urlencoded()` nedir?**
-HTML formlarından gelen `application/x-www-form-urlencoded` formatındaki veriyi parse ederek `req.body`'ye bağlar. Vanilla HTTP'de `URLSearchParams` ile elle yaptığımız işi Express bu middleware ile otomatik halleder.
+## 4. `return` Kullanımı
 
-**`express.json()` nedir?**
-`application/json` formatındaki body'yi parse eder. fetch, axios veya Postman ile JSON gönderildiğinde bu middleware devreye girer.
+Her `if` bloğunun sonuna `return` ekle. Yoksa bir istek birden fazla bloğa girebilir ve `res.end()` iki kez çağrılarak hata alırsın:
 
-**Middleware sırası önemlidir:**
 ```javascript
-// ✅ Doğru — middleware'ler route'lardan önce tanımlanır
-app.use(express.urlencoded({ extended: true }));
-app.post('/users', (req, res) => { console.log(req.body) }); // dolu gelir
+if (req.method === 'GET' && req.url === '/') {
+    fs.readFile(filePath, 'utf-8', (err, data) => {
+        res.end(data);
+    });
+    return; // ✅ alttaki if bloklarına girme
+}
 
-// ❌ Yanlış — req.body undefined olur
-app.post('/users', (req, res) => { console.log(req.body) });
-app.use(express.urlencoded({ extended: true }));
+if (req.method === 'GET' && req.url === '/users') {
+    res.end(JSON.stringify(users));
+    return; // ✅
+}
 ```
 
-**HTML dosyası göndermek için `res.sendFile()` kullanılır:**
+---
+
+## 5. Express ile Aynı Yapı
+
+Express, yukarıda elle yaptığın şeyleri senin yerine halleder.
+
+### Routing
+
 ```javascript
-// ❌ Uzun yol
-fs.readFile(filePath, (err, data) => {
+// Vanilla HTTP — elle kontrol
+if (req.method === 'GET' && req.url === '/users') { }
+
+// Express — doğrudan tanımlanır
+app.get('/users', (req, res) => { });
+app.post('/users', (req, res) => { });
+```
+
+### HTML Dosyası Göndermek
+
+```javascript
+// Vanilla HTTP — fs.readFile + res.end
+fs.readFile(filePath, 'utf-8', (err, data) => {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(data);
 });
 
-// ✅ Express'in kısa yolu
-res.sendFile(filePath); // Content-Type, hata yönetimi, stream — hepsini halleder
+// Express — tek satır
+res.sendFile(filePath); // okuma, hata yönetimi, Content-Type — hepsini halleder
 ```
 
-**Birden fazla statik dosya varsa `express.static()` kullanılır:**
+### Body Parse — Middleware
+
+Express'te `req.body` otomatik dolu gelmez. Middleware tanımlanmazsa `undefined` olur.
+
 ```javascript
-app.use(express.static('public'));
-// public/index.html → http://localhost:8080/
-// public/style.css  → http://localhost:8080/style.css
+app.use(express.urlencoded({ extended: true })); // form verisini parse eder
+app.use(express.json());                          // JSON body'yi parse eder
+```
+
+Bu middleware'ler arka planda tam olarak şunu yapar: stream'i birleştirir, formatı tespit eder ve `req.body`'ye bağlar. Vanilla HTTP'de bunu `req.on('data')` ve `URLSearchParams` ile sen yapıyordun.
+
+> ⚠️ Middleware'ler route tanımlarından **önce** yazılmalıdır. Sonra yazılırsa `req.body` undefined gelir.
+
+```javascript
+// ✅ Doğru sıra
+app.use(express.urlencoded({ extended: true }));
+
+app.post('/users', (req, res) => {
+    console.log(req.body); // { name: 'Ahmet' }
+});
 ```
 
 ---
 
-## 4. Karşılaştırma
+## Özet
 
-| | Vanilla HTTP | Express.js |
+| | Vanilla HTTP | Express |
 |---|---|---|
-| **Routing** | `req.method` ve `req.url` ile elle | `app.get()`, `app.post()` |
-| **Body parse** | `req.on('data')` + `URLSearchParams` | `express.urlencoded()` / `express.json()` |
-| **HTML dosyası** | `fs.readFile()` + `res.end(data)` | `res.sendFile()` |
-| **JSON yanıt** | `JSON.stringify()` + `res.end()` | `res.json()` |
-| **Hata yönetimi** | Elle yazılır | Middleware ile merkezi yönetim |
-
----
-
-## 5. Kritik Notlar
-
-### `if` ile `&&` — Virgül Operatörüne Dikkat
-```javascript
-// ❌ Yanlış — virgül operatörü soldaki ifadeyi yok sayar
-if (req.method === 'POST', req.url === '/users')
-
-// ✅ Doğru
-if (req.method === 'POST' && req.url === '/users')
-```
-
-### `fs.readFile` — Buffer mı, String mi?
-```javascript
-// Buffer döner — binary dosyalar (resim, PDF) için uygundur
-fs.readFile(filePath, (err, data) => { });
-
-// String döner — metin dosyaları (HTML, JSON) için kullanılabilir
-fs.readFile(filePath, 'utf-8', (err, data) => { });
-```
-
-`res.end()` her ikisini de kabul eder. `res.sendFile()` ise bunu tamamen soyutlar.
-
-### Form Verisini Yanlış Parse Etmek
-```javascript
-// ❌ Yanlış — form verisi JSON değildir
-const newUser = JSON.parse(body); // SyntaxError fırlatır
-
-// ✅ Doğru
-const parsed = new URLSearchParams(body);
-const name = parsed.get('name');
-```
+| Routing | `req.method` + `req.url` ile elle | `app.get()`, `app.post()` |
+| HTML dosyası | `fs.readFile()` + `res.end(data)` | `res.sendFile()` |
+| Form body parse | `req.on('data')` + `URLSearchParams` | `express.urlencoded()` middleware |
+| JSON body parse | `req.on('data')` + `JSON.parse()` | `express.json()` middleware |
